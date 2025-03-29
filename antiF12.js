@@ -1,206 +1,236 @@
-// Protection avancée contre l'inspection et les outils de développement
+// Protection anti-DevTools
 (function() {
-    // Configuration initiale
-    const config = {
-        debuggerEnabled: false,
-        consoleOverrideEnabled: true,
-        keyboardShortcutsBlocked: true,
-        contextMenuBlocked: true,
-        devtoolsDetectionEnabled: true,
-        cssProtectionEnabled: true
-    };
+    let originalContent = document.body.innerHTML;
+    let devToolsDetected = false;
     
-    // 1. Bloquer les raccourcis clavier standards
-    if (config.keyboardShortcutsBlocked) {
+    // Configuration (tout activé par défaut)
+    const config = {
+        keyboardShortcutsBlocked: true,   // Bloquer raccourcis clavier
+        contextMenuBlocked: true,          // Bloquer le clic droit
+        devtoolsDetectionEnabled: true,    // Détecter l'ouverture des DevTools
+        consoleProtectionEnabled: true,    // Protéger la console
+        debuggerProtectionEnabled: true,   // Protection via debugger
+        contentProtectionEnabled: true     // Cacher le contenu si DevTools ouverts
+    };
+
+    function hideContent() {
+        if (!devToolsDetected && config.contentProtectionEnabled) {
+            devToolsDetected = true;
+            document.body.innerHTML = '<div style="display:flex;justify-content:center;align-items:center;height:100vh;width:100vw;position:fixed;top:0;left:0;background:#fff;z-index:9999;"><h1>Inspection non autorisée</h1></div>';
+        }
+    }
+
+    function restoreContent() {
+        if (devToolsDetected && config.contentProtectionEnabled) {
+            devToolsDetected = false;
+            document.body.innerHTML = originalContent;
+            attachEvents();
+        }
+    }
+    
+    // 1. Bloquer les raccourcis clavier standards pour DevTools
+    function blockKeyboardShortcuts() {
         document.addEventListener("keydown", function(e) {
-            // Combinaisons d'outils de développement courantes
-            if (
-                // F12
-                e.keyCode === 123 || 
-                // Ctrl+Shift+I/J/C
-                (e.ctrlKey && e.shiftKey && (e.keyCode === 73 || e.keyCode === 74 || e.keyCode === 67)) ||
-                // Ctrl+U (voir source)
-                (e.ctrlKey && e.keyCode === 85) ||
-                // Ctrl+S (sauvegarder)
-                (e.keyCode === 83 && (navigator.platform.match("Mac") ? e.metaKey : e.ctrlKey)) ||
-                // Alt+Command+I (Mac)
-                (e.altKey && e.metaKey && e.keyCode === 73)
-            ) {
+            const restricted = [
+                e.keyCode === 123,                                       // F12
+                e.ctrlKey && e.shiftKey && e.keyCode === 73,             // Ctrl+Shift+I
+                e.ctrlKey && e.shiftKey && e.keyCode === 74,             // Ctrl+Shift+J
+                e.ctrlKey && e.shiftKey && e.keyCode === 67,             // Ctrl+Shift+C
+                e.ctrlKey && e.keyCode === 85,                           // Ctrl+U (voir source)
+                e.ctrlKey && (e.keyCode === 83 || e.keyCode === 80),     // Ctrl+S, Ctrl+P
+                e.altKey && e.metaKey && e.keyCode === 73,               // Alt+Cmd+I (Mac)
+                e.metaKey && e.altKey && e.keyCode === 67                // Cmd+Alt+C (Mac)
+            ].some(Boolean);
+            
+            if (restricted) {
                 e.preventDefault();
                 e.stopPropagation();
+                hideContent();
                 return false;
             }
         }, true);
     }
     
     // 2. Bloquer le menu contextuel (clic droit)
-    if (config.contextMenuBlocked) {
+    function blockContextMenu() {
         document.addEventListener("contextmenu", function(e) {
             e.preventDefault();
             return false;
         }, true);
     }
     
-    // 3. Détection de DevTools via les dimensions de la fenêtre
-    if (config.devtoolsDetectionEnabled) {
-        let devtoolsOpen = false;
-        
-        // Méthode 1: Vérification des dimensions de la fenêtre
-        const checkDevTools = function() {
+    // 3. Détection avancée des DevTools (combinaison de plusieurs méthodes)
+    function detectDevTools() {
+        // Méthode 1: Détection par taille de fenêtre
+        const sizeDetection = function() {
             const threshold = 160;
-            const widthThreshold = window.outerWidth - window.innerWidth > threshold;
-            const heightThreshold = window.outerHeight - window.innerHeight > threshold;
+            const widthDiff = Math.abs(window.outerWidth - window.innerWidth) > threshold;
+            const heightDiff = Math.abs(window.outerHeight - window.innerHeight) > threshold;
             
-            if (widthThreshold || heightThreshold) {
-                if (!devtoolsOpen) {
-                    devtoolsOpen = true;
-                    // Action lorsque DevTools est détecté ouvert
-                    document.body.innerHTML = "Inspection non autorisée";
-                }
-            } else {
-                devtoolsOpen = false;
+            if (widthDiff || heightDiff) {
+                hideContent();
             }
         };
         
-        // Vérification régulière
-        setInterval(checkDevTools, 1000);
-        window.addEventListener("resize", checkDevTools);
-        
-        // Méthode 2: Détection via console.clear timing
-        let lastConsoleTime = 0;
-        const consoleLogger = function() {
-            const now = performance.now();
-            const diff = now - lastConsoleTime;
-            lastConsoleTime = now;
+        // Méthode 2: Détection via console.debug timing
+        const consoleDetection = function() {
+            let isDebugOpen = false;
+            const div = document.createElement('div');
+            let loop = 0;
             
-            if (diff > 100) {
-                devtoolsOpen = true;
-                document.body.innerHTML = "Inspection non autorisée";
-            }
+            Object.defineProperty(div, "id", {
+                get() {
+                    loop++;
+                    if (loop > 1) {
+                        isDebugOpen = true;
+                        hideContent();
+                    }
+                    return "";
+                }
+            });
             
+            console.log(div);
             console.clear();
         };
         
-        if (config.debuggerEnabled) {
-            setInterval(consoleLogger, 20);
+        // Méthode 3: Détection par temps d'exécution du debugger
+        const debuggerDetection = function() {
+            const start = performance.now();
+            debugger;
+            const end = performance.now();
+            
+            if (end - start > 100) {
+                hideContent();
+            }
+        };
+        
+        // Méthode 4: Détection par RegExp
+        const regexpDetection = function() {
+            const regexp = /./;
+            regexp.toString = function() {
+                hideContent();
+                return 'devtools-check';
+            };
+            console.log(regexp);
+        };
+        
+        sizeDetection();
+        if (config.consoleProtectionEnabled) {
+            try {
+                consoleDetection();
+                regexpDetection();
+            } catch (e) { /* Ignorer les erreurs */ }
+        }
+        if (config.debuggerProtectionEnabled) {
+            debuggerDetection();
+        }
+        setInterval(sizeDetection, 1000);
+        window.addEventListener("resize", sizeDetection);
+        
+        if (config.debuggerProtectionEnabled) {
+            setInterval(debuggerDetection, 2000);
         }
     }
     
-    // 4. Redéfinition des objets de console
-    if (config.consoleOverrideEnabled) {
+    // 4. Protection de la console
+    function protectConsole() {
         const noop = function() { return undefined; };
         const methods = ['log', 'debug', 'info', 'warn', 'error', 'dir', 'dirxml', 'trace', 'group', 
-                        'groupCollapsed', 'groupEnd', 'time', 'timeEnd', 'profile', 'profileEnd', 
-                        'count', 'assert', 'timeStamp'];
+                         'groupCollapsed', 'groupEnd', 'time', 'timeEnd', 'profile', 'profileEnd', 
+                         'count', 'assert', 'timeStamp', 'clear', 'table'];
         
-        // Sauvegarder les méthodes originales
         const originalConsole = {};
-        methods.forEach(method => {
-            originalConsole[method] = console[method];
-            console[method] = noop;
-        });
-    }
-    
-    // 5. Protection CSS pour masquer le contenu lors de l'inspection
-    if (config.cssProtectionEnabled) {
-        const style = document.createElement('style');
-        style.textContent = `
-            /* Masque le contenu lorsqu'une sélection d'inspection est active */
-            *:hover, *:active, *:focus {
-                outline: none !important;
-            }
+        
+        try {
+            methods.forEach(method => {
+                if (console[method]) {
+                    originalConsole[method] = console[method];
+                    console[method] = noop;
+                }
+            });
             
-            /* Active la protection uniquement lorsque la page est inspectée */
-            *, *::before, *::after {
-                animation-duration: 0.001s !important;
-                animation-name: nodeInserted !important;
-                animation-timing-function: linear !important;
-                animation-fill-mode: forwards !important;
-            }
-            
-            @keyframes nodeInserted {
-                from { opacity: 0.99; }
-                to { opacity: 1; }
-            }
-            
-            /* Masquer le texte sélectionné pour empêcher la copie facile */
-            ::selection {
-                background-color: transparent;
-                color: inherit;
-            }
-        `;
-        document.head.appendChild(style);
-    }
-    
-    // 6. Protection contre le débogage via debugger
-    if (config.debuggerEnabled) {
+            Object.freeze(console);
+        } catch (e) { /* Ignorer les erreurs */ }
+        
         setInterval(function() {
-            debugger;
+            try {
+                console.profile();
+                console.profileEnd();
+                if (console.clear) console.clear();
+            } catch (e) { /* Ignorer les erreurs */ }
+        }, 1000);
+    }
+    
+    // 5. Protection contre le débogage via debugger
+    function protectWithDebugger() {
+        setInterval(function() {
+            try {
+                debugger;
+            } catch (e) { /* Ignorer les erreurs */ }
         }, 100);
     }
     
-    // 7. Empêcher l'enregistrement d'images
-    document.addEventListener("dragstart", function(e) {
-        e.preventDefault();
-        return false;
-    });
-    
-    // 8. Surveiller les modifications DOM qui pourraient indiquer des outils d'injection
-    const observer = new MutationObserver(function(mutations) {
-        mutations.forEach(function(mutation) {
-            if (mutation.addedNodes.length) {
-                for (let i = 0; i < mutation.addedNodes.length; i++) {
-                    const node = mutation.addedNodes[i];
-                    if (node.nodeType === 1 && (
-                        node.id === 'firebug-script' || 
-                        node.classList.contains('xdebug-var-dump') ||
-                        node.classList.contains('websql-profiler')
-                    )) {
-                        node.remove();
+    // 6. Surveillance des modifications DOM qui pourraient indiquer des outils d'injection
+    function monitorDOMChanges() {
+        try {
+            const observer = new MutationObserver(function(mutations) {
+                mutations.forEach(function(mutation) {
+                    if (mutation.addedNodes.length) {
+                        for (let i = 0; i < mutation.addedNodes.length; i++) {
+                            const node = mutation.addedNodes[i];
+                            if (node.nodeType === 1 && (
+                                node.id === 'firebug-script' || 
+                                node.id?.includes('react-dev') ||
+                                node.id?.includes('devtools') ||
+                                node.classList?.contains('xdebug-var-dump') ||
+                                node.classList?.contains('websql-profiler')
+                            )) {
+                                node.remove();
+                                hideContent();
+                            }
+                        }
                     }
-                }
-            }
-        });
-    });
+                });
+            });
+            
+            observer.observe(document.documentElement, {
+                childList: true,
+                subtree: true
+            });
+        } catch (e) { /* Ignorer les erreurs */ }
+    }
     
-    observer.observe(document.documentElement, {
-        childList: true,
-        subtree: true
-    });
-    
-    // 9. Vérifier si le débogueur est attaché
-    function checkDebugger() {
-        const startTime = performance.now();
-        function debuggerTrap() { debugger; }
-        debuggerTrap();
-        const endTime = performance.now();
+    function attachEvents() {
+        if (config.keyboardShortcutsBlocked) {
+            blockKeyboardShortcuts();
+        }
         
-        if (endTime - startTime > 100) {
-            // Débogueur probablement attaché
-            document.body.innerHTML = "Débogage non autorisé";
+        if (config.contextMenuBlocked) {
+            blockContextMenu();
         }
     }
     
-    if (config.debuggerEnabled) {
-        setInterval(checkDebugger, 1000);
+    function init() {
+        originalContent = document.body.innerHTML;
+        
+        attachEvents();
+        
+        // Activer les protections
+        if (config.devtoolsDetectionEnabled) {
+            detectDevTools();
+        }
+        
+        if (config.consoleProtectionEnabled) {
+            protectConsole();
+        }
+        
+        if (config.debuggerProtectionEnabled) {
+            protectWithDebugger();
+        }
+        
+        // Ajouter la surveillance DOM
+        monitorDOMChanges();
     }
     
-    // 10. Supprimer la fonctionnalité de copier-coller
-    document.oncopy = function(e) {
-        e.preventDefault();
-        return false;
-    };
-    
-    document.oncut = function(e) {
-        e.preventDefault();
-        return false;
-    };
-    
-    document.onpaste = function(e) {
-        e.preventDefault();
-        return false;
-    };
-    
-    // Message d'initialisation masqué
-    console.log("%c ", "font-size:0;");
+    setTimeout(init, 50);
 })();
